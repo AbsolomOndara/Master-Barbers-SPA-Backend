@@ -14,7 +14,7 @@ import path from 'node:path';
 const {Pool}=pg;
 const app=express();
 const PORT=process.env.PORT||4000;
-const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL&&!process.env.DATABASE_URL.includes('localhost')?{rejectUnauthorized:false}:undefined,max:10,idleTimeoutMillis:30000,connectionTimeoutMillis:10000});
+const pool=new Pool({connectionString:process.env.DATABASE_URL,max:10,idleTimeoutMillis:30000,connectionTimeoutMillis:10000});
 const s3Ready=Boolean(process.env.R2_ENDPOINT&&process.env.R2_BUCKET&&process.env.R2_ACCESS_KEY_ID&&process.env.R2_SECRET_ACCESS_KEY&&process.env.R2_PUBLIC_BASE_URL);
 const s3=s3Ready?new S3Client({region:process.env.R2_REGION||'auto',endpoint:process.env.R2_ENDPOINT,forcePathStyle:true,credentials:{accessKeyId:process.env.R2_ACCESS_KEY_ID,secretAccessKey:process.env.R2_SECRET_ACCESS_KEY}}):null;
 const cookieName=process.env.COOKIE_NAME||'mb_session';
@@ -33,7 +33,7 @@ const adminOnly=(req,res,next)=>req.user?.role==='admin'?next():res.status(403).
 const admin= [authenticate,adminOnly];
 
 async function initDb(){
- await pool.query(`CREATE TABLE IF NOT EXISTS users(id UUID PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,phone TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'client' CHECK(role IN ('client','admin')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+ await pool.query(`CREATE TABLE IF NOT EXISTS users(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,phone TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'client' CHECK(role IN ('client','admin')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
  CREATE TABLE IF NOT EXISTS bookings(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),name TEXT NOT NULL,phone TEXT NOT NULL,email TEXT,service TEXT NOT NULL,preferred_date DATE,preferred_time TEXT,notes TEXT,status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','confirmed','completed','cancelled')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
  CREATE TABLE IF NOT EXISTS gallery_items(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),title TEXT NOT NULL,description TEXT,type TEXT NOT NULL CHECK(type IN ('image','video','tiktok')),url TEXT NOT NULL,object_key TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
  CREATE TABLE IF NOT EXISTS offers(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),title TEXT NOT NULL,message TEXT,active BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
@@ -41,6 +41,7 @@ async function initDb(){
  CREATE TABLE IF NOT EXISTS subscriptions(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),email TEXT UNIQUE,phone TEXT UNIQUE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(email IS NOT NULL OR phone IS NOT NULL));
  CREATE INDEX IF NOT EXISTS bookings_created_at_idx ON bookings(created_at DESC);CREATE INDEX IF NOT EXISTS reviews_status_idx ON reviews(status);CREATE INDEX IF NOT EXISTS gallery_created_at_idx ON gallery_items(created_at DESC);`);
  await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+ await pool.query('ALTER TABLE users ALTER COLUMN id SET DEFAULT gen_random_uuid()');
  const email=clean(process.env.ADMIN_EMAIL,250).toLowerCase(),password=process.env.ADMIN_PASSWORD;
  if(email&&password){const exists=await pool.query('SELECT id FROM users WHERE email=$1',[email]);if(!exists.rowCount){const hash=await bcrypt.hash(password,12);await pool.query('INSERT INTO users(name,email,phone,password_hash,role) VALUES($1,$2,$3,$4,$5)',[clean(process.env.ADMIN_NAME||'Master Barbers Admin',120),email,'',hash,'admin']);console.log(`Seeded first admin account: ${email}`)}}
  for(const [i,id] of clipIds.entries()){const url=`https://www.tiktok.com/@master.barbers0/video/${id}`;await pool.query(`INSERT INTO gallery_items(title,description,type,url) SELECT $1,$2,'tiktok',$3 WHERE NOT EXISTS(SELECT 1 FROM gallery_items WHERE url=$3)`,[`Shop moment ${i+1}`,'A clip from the Master Barbers TikTok page.',url])}
